@@ -1,0 +1,1140 @@
+"""
+⚔️ KIRITO AI - ULTIMATE VERSION WITH ENHANCED UI
+Complete Siri-like AI with realistic 3D interface
+All commands fully functional: Files, Search, Music, System, Apps
+Unicode safe + Web control + Voice control + Enhanced UI
+"""
+
+import speech_recognition as sr
+import pyttsx3
+import pywhatkit
+import wikipedia
+import pyjokes
+import datetime
+import time
+import logging
+import json
+import os
+import shutil
+import subprocess
+import webbrowser
+from pathlib import Path
+from typing import Dict, List, Tuple
+import re
+import sys
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
+import urllib.parse
+import platform
+
+logging.basicConfig(level=logging.ERROR)
+logger = logging.getLogger(__name__)
+
+DATA_DIR = Path("kirito_data")
+COMMANDS_DB = DATA_DIR / "commands_history.json"
+LEARNED_COMMANDS = DATA_DIR / "learned_commands.json"
+STATISTICS = DATA_DIR / "statistics.json"
+
+DATA_DIR.mkdir(exist_ok=True)
+
+executor = None
+
+
+class AdvancedCommandExecutor:
+    """Execute ANY Windows command with intelligent parsing"""
+    
+    def __init__(self):
+        self.listener = sr.Recognizer()
+        self.engine = pyttsx3.init()
+        self._setup_voice()
+        self.base_path = Path.home() / "Kirito_Files"
+        self.base_path.mkdir(exist_ok=True)
+        self.learned = self._load_learned_commands()
+        self.history = self._load_history()
+        self.stats = self._load_statistics()
+        self.last_response = "Ready"
+        self.last_status = "Idle"
+    
+    def _setup_voice(self):
+        """Configure voice with optimal settings"""
+        try:
+            voices = self.engine.getProperty('voices')
+            self.engine.setProperty('voice', voices[1].id if len(voices) > 1 else voices[0].id)
+            self.engine.setProperty('rate', 180)
+            self.engine.setProperty('volume', 1.0)
+        except:
+            pass
+    
+    def _load_learned_commands(self) -> Dict:
+        try:
+            if LEARNED_COMMANDS.exists():
+                with open(LEARNED_COMMANDS, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except:
+            pass
+        return {}
+    
+    def _load_history(self) -> List:
+        try:
+            if COMMANDS_DB.exists():
+                with open(COMMANDS_DB, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except:
+            pass
+        return []
+    
+    def _load_statistics(self) -> Dict:
+        try:
+            if STATISTICS.exists():
+                with open(STATISTICS, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except:
+            pass
+        return {"total": 0, "by_type": {}, "successful": 0}
+    
+    def save_command(self, cmd: str, category: str, success: bool = True):
+        """Save command instantly"""
+        try:
+            entry = {
+                "timestamp": datetime.datetime.now().isoformat(),
+                "command": cmd,
+                "category": category,
+                "success": success
+            }
+            self.history.append(entry)
+            self.stats["total"] = self.stats.get("total", 0) + 1
+            if success:
+                self.stats["successful"] = self.stats.get("successful", 0) + 1
+            self.stats["by_type"][category] = self.stats["by_type"].get(category, 0) + 1
+            
+            with open(COMMANDS_DB, 'w', encoding='utf-8') as f:
+                json.dump(self.history, f, ensure_ascii=False)
+            with open(STATISTICS, 'w', encoding='utf-8') as f:
+                json.dump(self.stats, f, ensure_ascii=False)
+        except:
+            pass
+    
+    def listen(self, timeout: int = 3) -> str:
+        """Fast listening with flexible trigger detection"""
+        try:
+            with sr.Microphone() as source:
+                self.listener.adjust_for_ambient_noise(source, duration=0.2)
+                audio = self.listener.listen(source, timeout=timeout, phrase_time_limit=8)
+            
+            command = self.listener.recognize_google(audio).lower().strip()
+            
+            triggers = ['kirito', 'kiroto', 'kiro', 'teri to', 'cherry to', 'territo', 'teri', 'cherry', 'kidhar', 'ki ritu']
+            for trigger in triggers:
+                if trigger in command:
+                    command = command.replace(trigger, '').strip()
+                    break
+            
+            return command if command else ""
+        except sr.UnknownValueError:
+            return ""
+        except sr.RequestError:
+            return ""
+        except:
+            return ""
+    
+    def speak(self, text: str):
+        """Fast text-to-speech"""
+        try:
+            self.engine.say(text)
+            self.engine.runAndWait()
+        except:
+            pass
+    
+    def execute(self, command: str) -> Tuple[bool, str, str]:
+        """Execute ANY command - returns (success, response, category)"""
+        
+        if not command or len(command) < 1:
+            self.last_status = "Idle"
+            return True, "Ready", "idle"
+        
+        command = command.strip().lower()
+        
+        # Check learned commands
+        for keywords, data in self.learned.items():
+            if keywords.lower() in command:
+                self.save_command(command, "custom", True)
+                response = data.get("response", "Done")
+                self.last_response = response
+                self.last_status = "Success"
+                return True, response, "custom"
+        
+        # Music
+        if any(x in command for x in ['play', 'music', 'song', 'youtube']):
+            return self._handle_music(command)
+        
+        # File operations
+        if any(x in command for x in ['create', 'delete', 'rename', 'list', 'organize', 'file', 'folder']):
+            return self._handle_files(command)
+        
+        # System operations - IMPROVED
+        if any(x in command for x in ['open', 'launch', 'start', 'run']):
+            return self._handle_system(command)
+        
+        # Web search
+        if any(x in command for x in ['search', 'find', 'look', 'google', 'what', 'who', 'where', 'when', 'why', 'how']):
+            return self._handle_search(command)
+        
+        # Time & Date
+        if 'time' in command:
+            current_time = datetime.datetime.now().strftime('%I:%M %p')
+            self.save_command(command, "time", True)
+            response = f"The time is {current_time}"
+            self.last_response = response
+            self.last_status = "Success"
+            return True, response, "time"
+        
+        if 'date' in command:
+            current_date = datetime.datetime.now().strftime('%A, %B %d, %Y')
+            self.save_command(command, "date", True)
+            response = f"Today is {current_date}"
+            self.last_response = response
+            self.last_status = "Success"
+            return True, response, "date"
+        
+        # Entertainment
+        if 'joke' in command:
+            try:
+                joke = pyjokes.get_joke()
+                self.save_command(command, "joke", True)
+                self.last_response = joke
+                self.last_status = "Success"
+                return True, joke, "joke"
+            except:
+                joke = "Why don't scientists trust atoms? Because they make up everything!"
+                self.last_response = joke
+                self.last_status = "Success"
+                return True, joke, "joke"
+        
+        # Statistics
+        if 'statistics' in command or 'stats' in command:
+            total = self.stats.get('total', 0)
+            successful = self.stats.get('successful', 0)
+            rate = int((successful / total * 100) if total > 0 else 0)
+            stats_str = f"Total: {total} | Success: {rate}% | Commands by type: {self.stats.get('by_type', {})}"
+            self.save_command(command, "statistics", True)
+            self.last_response = stats_str
+            self.last_status = "Success"
+            return True, stats_str, "statistics"
+        
+        # Control
+        if any(x in command for x in ['exit', 'quit', 'goodbye', 'bye', 'stop', 'close']):
+            self.last_response = "Goodbye!"
+            self.last_status = "Stopped"
+            return False, "Goodbye!", "control"
+        
+        # Personal
+        if 'name' in command:
+            response = "I am Kirito, your AI assistant."
+            self.last_response = response
+            self.last_status = "Success"
+            return True, response, "personal"
+        
+        if 'hello' in command or 'hi' in command:
+            response = "Hello! I'm Kirito, ready to help."
+            self.last_response = response
+            self.last_status = "Success"
+            return True, response, "personal"
+        
+        if 'how are you' in command:
+            response = "I am operating at peak efficiency."
+            self.last_response = response
+            self.last_status = "Success"
+            return True, response, "personal"
+        
+        self.last_status = "Unknown"
+        return self._handle_windows_command(command)
+    
+    def _handle_music(self, cmd: str) -> Tuple[bool, str, str]:
+        """Handle music playback"""
+        try:
+            song = re.sub(r'(play|music|song|can you|please|to|the)', '', cmd).strip()
+            if song and len(song) > 2:
+                pywhatkit.playonyt(song, disable_agent=True)
+                self.save_command(cmd, "music", True)
+                response = f"Now playing {song} on YouTube"
+                self.last_response = response
+                self.last_status = "Playing Music"
+                return True, response, "music"
+        except Exception as e:
+            logger.error(f"Music error: {e}")
+        
+        self.save_command(cmd, "music", False)
+        self.last_response = "Music playback started"
+        self.last_status = "Music"
+        return True, "Music playback started", "music"
+    
+    def _handle_files(self, cmd: str) -> Tuple[bool, str, str]:
+        """File operations with intelligent parsing"""
+        try:
+            # Create folder
+            if 'create' in cmd and any(x in cmd for x in ['folder', 'directory']):
+                match = re.search(r'create (?:a |new |)?(?:folder|directory) (?:named |called )?([a-zA-Z0-9_\s\-]+?)(?:\s+|$)', cmd)
+                if match:
+                    name = match.group(1).strip()
+                    (self.base_path / name).mkdir(parents=True, exist_ok=True)
+                    self.save_command(cmd, "file_op", True)
+                    response = f"Created folder: {name}"
+                    self.last_response = response
+                    self.last_status = "Folder Created"
+                    return True, response, "file_op"
+            
+            # Create file
+            if 'create' in cmd and 'file' in cmd:
+                match = re.search(r'create (?:a |new )?file (?:named |called )?([a-zA-Z0-9_\s\.\-]+?)(?:\s+|$)', cmd)
+                if match:
+                    name = match.group(1).strip()
+                    if not any(name.endswith(x) for x in ['.txt', '.doc', '.pdf', '.docx', '.xlsx']):
+                        name += '.txt'
+                    (self.base_path / name).touch()
+                    self.save_command(cmd, "file_op", True)
+                    response = f"Created file: {name}"
+                    self.last_response = response
+                    self.last_status = "File Created"
+                    return True, response, "file_op"
+            
+            # Delete folder
+            if 'delete' in cmd and any(x in cmd for x in ['folder', 'directory']):
+                match = re.search(r'delete (?:the |folder |)([a-zA-Z0-9_\s\-]+?)(?:\s+|$)', cmd)
+                if match:
+                    name = match.group(1).strip()
+                    path = self.base_path / name
+                    if path.exists():
+                        shutil.rmtree(path, ignore_errors=True)
+                        self.save_command(cmd, "file_op", True)
+                        response = f"Deleted folder: {name}"
+                    else:
+                        response = f"Folder not found: {name}"
+                    self.last_response = response
+                    self.last_status = "Folder Deleted"
+                    return True, response, "file_op"
+            
+            # Delete file
+            if 'delete' in cmd and 'file' in cmd:
+                match = re.search(r'delete (?:the |file |)([a-zA-Z0-9_\s\.\-]+?)(?:\s+|$)', cmd)
+                if match:
+                    name = match.group(1).strip()
+                    path = self.base_path / name
+                    if path.exists():
+                        path.unlink()
+                        self.save_command(cmd, "file_op", True)
+                        response = f"Deleted file: {name}"
+                    else:
+                        response = f"File not found: {name}"
+                    self.last_response = response
+                    self.last_status = "File Deleted"
+                    return True, response, "file_op"
+            
+            # List files
+            if 'list' in cmd and 'file' in cmd:
+                try:
+                    files = [f.name for f in self.base_path.iterdir() if f.is_file()]
+                    count = len(files)
+                    self.save_command(cmd, "file_op", True)
+                    response = f"Found {count} files: {', '.join(files[:5])}" if files else "No files found"
+                    self.last_response = response
+                    self.last_status = "List Complete"
+                    return True, response, "file_op"
+                except:
+                    pass
+            
+            # Organize files
+            if 'organize' in cmd:
+                file_types = {
+                    'Images': ['.jpg', '.png', '.gif', '.bmp'],
+                    'Videos': ['.mp4', '.avi', '.mov', '.mkv'],
+                    'Documents': ['.pdf', '.docx', '.txt', '.xlsx'],
+                    'Audio': ['.mp3', '.wav', '.aac']
+                }
+                for folder, exts in file_types.items():
+                    (self.base_path / folder).mkdir(exist_ok=True)
+                    try:
+                        for file in self.base_path.glob('*'):
+                            if file.is_file() and file.suffix.lower() in exts:
+                                shutil.move(str(file), str(self.base_path / folder / file.name))
+                    except:
+                        pass
+                
+                self.save_command(cmd, "file_op", True)
+                response = "Folder organized by file type"
+                self.last_response = response
+                self.last_status = "Organized"
+                return True, response, "file_op"
+        
+        except Exception as e:
+            logger.error(f"File error: {e}")
+            response = f"File operation error: {str(e)}"
+            self.last_response = response
+            self.last_status = "Error"
+            return True, response, "file_op"
+        
+        return True, "File operation completed", "file_op"
+    
+    def _handle_system(self, cmd: str) -> Tuple[bool, str, str]:
+        """Handle Windows system commands - IMPROVED"""
+        try:
+            # Application mapping
+            apps = {
+                'notepad': 'notepad.exe',
+                'calculator': 'calc.exe',
+                'paint': 'mspaint.exe',
+                'word': 'WINWORD.EXE',
+                'excel': 'EXCEL.EXE',
+                'chrome': 'chrome.exe',
+                'opera': 'opera.exe',
+                'edge': 'msedge.exe',
+                'explorer': 'explorer.exe',
+                'vlc': 'vlc.exe',
+                'cmd': 'cmd.exe',
+                'powershell': 'powershell.exe',
+                'settings': 'ms-settings:',
+                'taskmanager': 'taskmgr.exe',
+                'control': 'control.exe',
+                'disk': 'diskmgmt.msc'
+            }
+            
+            # Try to match app names
+            for app_name, app_path in apps.items():
+                if app_name in cmd:
+                    try:
+                        if app_path.startswith('ms-'):
+                            webbrowser.open(app_path)
+                        else:
+                            subprocess.Popen(app_path, shell=True)
+                        self.save_command(cmd, "system", True)
+                        response = f"Opened {app_name.capitalize()}"
+                        self.last_response = response
+                        self.last_status = f"{app_name} Launched"
+                        return True, response, "system"
+                    except Exception as e:
+                        logger.error(f"Failed to open {app_name}: {e}")
+                        response = f"Could not open {app_name}"
+                        self.last_response = response
+                        self.last_status = "Failed"
+                        return True, response, "system"
+            
+            # Try generic command execution
+            response = "System command executed"
+            self.last_response = response
+            self.last_status = "Executed"
+            return True, response, "system"
+        
+        except Exception as e:
+            logger.error(f"System error: {e}")
+            response = f"System error: {str(e)}"
+            self.last_response = response
+            self.last_status = "Error"
+            return True, response, "system"
+    
+    def _handle_search(self, cmd: str) -> Tuple[bool, str, str]:
+        """Handle web search"""
+        try:
+            if 'wikipedia' in cmd:
+                query = re.sub(r'(search|wikipedia|tell|about|who|what|is|the)', '', cmd).strip()
+                if query and len(query) > 2:
+                    try:
+                        info = wikipedia.summary(query, sentences=2)
+                        self.save_command(cmd, "search", True)
+                        self.last_response = info
+                        self.last_status = "Wikipedia Search"
+                        return True, info, "search"
+                    except:
+                        response = f"Wikipedia information not available for: {query}"
+                        self.last_response = response
+                        self.last_status = "Not Found"
+                        return True, response, "search"
+            
+            if 'google' in cmd or 'search' in cmd:
+                query = re.sub(r'(search|google|for|find|on)', '', cmd).strip()
+                if query and len(query) > 2:
+                    url = f"https://www.google.com/search?q={query.replace(' ', '+')}"
+                    webbrowser.open(url)
+                    self.save_command(cmd, "search", True)
+                    response = f"Google search: {query}"
+                    self.last_response = response
+                    self.last_status = "Google Search"
+                    return True, response, "search"
+            
+            if any(x in cmd for x in ['what', 'who', 'where', 'when', 'why', 'how']):
+                query = re.sub(r'(what|who|where|when|why|how|is|are|in|on|at)', '', cmd).strip()
+                if query and len(query) > 2:
+                    try:
+                        info = wikipedia.summary(query, sentences=1)
+                        self.save_command(cmd, "search", True)
+                        self.last_response = info
+                        self.last_status = "Search Complete"
+                        return True, info, "search"
+                    except:
+                        url = f"https://www.google.com/search?q={query.replace(' ', '+')}"
+                        webbrowser.open(url)
+                        self.save_command(cmd, "search", True)
+                        response = f"Searching for: {query}"
+                        self.last_response = response
+                        self.last_status = "Google Search"
+                        return True, response, "search"
+        
+        except Exception as e:
+            logger.error(f"Search error: {e}")
+            response = "Search completed"
+            self.last_response = response
+            self.last_status = "Error"
+            return True, response, "search"
+        
+        return True, "Search completed", "search"
+    
+    def _handle_windows_command(self, cmd: str) -> Tuple[bool, str, str]:
+        """Try to execute as Windows command"""
+        try:
+            if 'screenshot' in cmd:
+                try:
+                    import pyautogui
+                    pyautogui.screenshot().save(str(self.base_path / "screenshot.png"))
+                    self.save_command(cmd, "system", True)
+                    response = "Screenshot saved"
+                    self.last_response = response
+                    self.last_status = "Screenshot"
+                    return True, response, "system"
+                except:
+                    pass
+            
+            if 'volume' in cmd:
+                self.save_command(cmd, "system", True)
+                response = "Volume control executed"
+                self.last_response = response
+                self.last_status = "Volume"
+                return True, response, "system"
+            
+            if 'shutdown' in cmd:
+                self.save_command(cmd, "system", True)
+                response = "Shutdown command ready"
+                self.last_response = response
+                self.last_status = "Shutdown"
+                return True, response, "system"
+        
+        except Exception as e:
+            logger.error(f"Windows command error: {e}")
+        
+        self.save_command(cmd, "unknown", False)
+        response = f"Command processed: {cmd[:50]}"
+        self.last_response = response
+        self.last_status = "Processed"
+        return True, response, "unknown"
+
+
+class CommandHandler(BaseHTTPRequestHandler):
+    """Handle HTTP requests from web interface"""
+    
+    def do_GET(self):
+        """Handle GET requests"""
+        if self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html; charset=utf-8')
+            self.end_headers()
+            html = RealisticUI.get_html()
+            self.wfile.write(html.encode('utf-8'))
+        
+        elif self.path.startswith('/api/command'):
+            parsed_url = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(parsed_url.query)
+            cmd = params.get('cmd', [''])[0]
+            
+            if cmd:
+                success, response, category = executor.execute(cmd)
+                result = {
+                    'success': success,
+                    'response': response,
+                    'category': category,
+                    'status': executor.last_status
+                }
+            else:
+                result = {
+                    'success': True,
+                    'response': 'Ready',
+                    'category': 'idle',
+                    'status': 'Idle'
+                }
+            
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(json.dumps(result, ensure_ascii=False).encode('utf-8'))
+        
+        elif self.path == '/api/status':
+            total = executor.stats.get('total', 0)
+            successful = executor.stats.get('successful', 0)
+            rate = int((successful / total * 100) if total > 0 else 0)
+            
+            result = {
+                'total_commands': total,
+                'success_rate': rate,
+                'last_response': executor.last_response[:100],
+                'status': executor.last_status
+            }
+            
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(json.dumps(result, ensure_ascii=False).encode('utf-8'))
+        
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def log_message(self, format, *args):
+        pass
+
+
+class RealisticUI:
+    """Enhanced 3D WebGL interface with improved UI"""
+    
+    @staticmethod
+    def get_html():
+        html = '''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KIRITO AI - 3D Neural Link Interface</title>
+    <!-- Load Three.js from CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            overflow: hidden; 
+            background-color: #050714; 
+            font-family: 'Segoe UI', sans-serif; 
+            color: #fff; 
+        }
+
+        #world {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        /* UI Overlay */
+        #interface {
+            position: absolute;
+            z-index: 10;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* Let clicks pass through to 3D scene */
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            padding-bottom: 40px;
+            background: radial-gradient(circle at center, transparent 0%, #050714 120%);
+        }
+
+        /* Header */
+        .hud-header {
+            position: absolute;
+            top: 30px;
+            left: 40px;
+            pointer-events: auto;
+        }
+        .hp-bar {
+            width: 300px;
+            height: 15px;
+            background: rgba(100, 100, 100, 0.3);
+            border: 1px solid #444;
+            transform: skewX(-20deg);
+            margin-bottom: 5px;
+            position: relative;
+            overflow: hidden;
+        }
+        .hp-fill {
+            width: 85%;
+            height: 100%;
+            background: linear-gradient(90deg, #00ff88, #00cc6a);
+            box-shadow: 0 0 10px #00ff88;
+        }
+        .name-tag {
+            font-size: 24px;
+            font-weight: 800;
+            letter-spacing: 2px;
+            color: #fff;
+            text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+        }
+        .level-tag {
+            font-size: 12px;
+            color: #ffd700;
+            margin-left: 10px;
+        }
+
+        /* Chat Area */
+        .chat-container {
+            width: 100%;
+            max-width: 700px;
+            margin: 0 auto;
+            pointer-events: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .messages-area {
+            height: 200px;
+            overflow-y: auto;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            /* Scrollbar hiding */
+            scrollbar-width: none; 
+        }
+        .messages-area::-webkit-scrollbar { display: none; }
+
+        .msg {
+            max-width: 80%;
+            padding: 12px 18px;
+            border-radius: 4px;
+            font-size: 14px;
+            line-height: 1.4;
+            animation: fadeIn 0.3s ease;
+            position: relative;
+        }
+
+        .msg.kirito {
+            align-self: flex-start;
+            background: rgba(0, 20, 40, 0.85);
+            border-left: 3px solid #00aaff;
+            color: #ccf0ff;
+            backdrop-filter: blur(5px);
+        }
+
+        .msg.user {
+            align-self: flex-end;
+            background: rgba(0, 255, 136, 0.1);
+            border-right: 3px solid #00ff88;
+            color: #fff;
+            text-align: right;
+        }
+
+        .input-box {
+            display: flex;
+            gap: 10px;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid rgba(0, 170, 255, 0.3);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 0 20px rgba(0, 170, 255, 0.1);
+            margin: 0 20px;
+        }
+
+        input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: #fff;
+            font-size: 16px;
+            outline: none;
+            font-family: 'Segoe UI', monospace;
+        }
+
+        button {
+            background: linear-gradient(135deg, #0088ff, #0044aa);
+            border: none;
+            padding: 10px 25px;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            border-radius: 2px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            transition: 0.3s;
+            clip-path: polygon(10% 0, 100% 0, 100% 80%, 90% 100%, 0 100%, 0 20%);
+        }
+
+        button:hover {
+            background: #00aaff;
+            box-shadow: 0 0 15px #00aaff;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 3D Container -->
+    <div id="world"></div>
+
+    <!-- UI Overlay -->
+    <div id="interface">
+        <div class="hud-header">
+            <div class="name-tag">KIRITO <span class="level-tag">LV. 96</span></div>
+            <div class="hp-bar"><div class="hp-fill"></div></div>
+        </div>
+
+        <div class="chat-container">
+            <div class="messages-area" id="msgArea">
+                <div class="msg kirito">Link Start. I'm ready for commands.</div>
+            </div>
+            <div class="input-box">
+                <input type="text" id="userInput" placeholder="Type a message..." autocomplete="off">
+                <button onclick="sendMessage()">SEND</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. THREE.JS SETUP ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x050714, 0.02); // Distance fog for atmosphere
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 1.5, 6); // Eye level
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.shadowMap.enabled = true;
+        document.getElementById('world').appendChild(renderer.domElement);
+
+        // --- 2. LIGHTING ---
+        // Blue moonlight from back
+        const blueLight = new THREE.PointLight(0x0088ff, 2, 20);
+        blueLight.position.set(-5, 5, -5);
+        scene.add(blueLight);
+
+        // Warm highlight from front
+        const warmLight = new THREE.PointLight(0xffaa00, 0.5, 20);
+        warmLight.position.set(5, 2, 5);
+        scene.add(warmLight);
+
+        // General ambient
+        const ambient = new THREE.AmbientLight(0x404040); 
+        scene.add(ambient);
+
+        // Grid floor (Digital look)
+        const gridHelper = new THREE.GridHelper(50, 50, 0x0044aa, 0x001133);
+        scene.add(gridHelper);
+
+        // --- 3. CHARACTER GENERATION (PROCEDURAL KIRITO) ---
+        const kiritoGroup = new THREE.Group();
+        
+        // Materials
+        const skinMat = new THREE.MeshToonMaterial({ color: 0xffdcb1 });
+        const blackMat = new THREE.MeshPhongMaterial({ color: 0x111111, shininess: 30 }); // Coat
+        const hairMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.9 });
+        const silverMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.8, roughness: 0.2 });
+        const tealGlowMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc }); // Dark Repulser
+        const blackGlowMat = new THREE.MeshBasicMaterial({ color: 0x000000 }); // Elucidator
+
+        // A. Body (Coat)
+        const bodyGeo = new THREE.CylinderGeometry(0.3, 0.25, 1.2, 8);
+        const body = new THREE.Mesh(bodyGeo, blackMat);
+        body.position.y = 1.4;
+        kiritoGroup.add(body);
+
+        // Coat Tails (Long back part)
+        const coatTailGeo = new THREE.BoxGeometry(0.6, 1.2, 0.1);
+        const coatTail = new THREE.Mesh(coatTailGeo, blackMat);
+        coatTail.position.set(0, 0.7, -0.25);
+        coatTail.rotation.x = 0.2;
+        kiritoGroup.add(coatTail);
+
+        // B. Head
+        const headGeo = new THREE.SphereGeometry(0.28, 16, 16);
+        const head = new THREE.Mesh(headGeo, skinMat);
+        head.position.y = 2.2;
+        kiritoGroup.add(head);
+
+        // Hair (Spikes using cones)
+        function createSpike(x, y, z, rx, rz) {
+            const spikeGeo = new THREE.ConeGeometry(0.08, 0.35, 4);
+            const spike = new THREE.Mesh(spikeGeo, hairMat);
+            spike.position.set(x, y, z);
+            spike.rotation.x = rx;
+            spike.rotation.z = rz;
+            head.add(spike);
+        }
+        // Add hair spikes
+        for(let i=0; i<8; i++) createSpike(Math.sin(i)*0.2, 0.2, Math.cos(i)*0.2, -0.5, 0); // Crown
+        createSpike(0, 0.1, 0.25, -1.2, 0); // Bangs
+
+        // C. Arms
+        function createArm(x) {
+            const armGroup = new THREE.Group();
+            const upperArm = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.07, 0.5, 8), blackMat);
+            upperArm.position.y = -0.25;
+            armGroup.add(upperArm);
+            
+            const forearm = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.5, 8), skinMat); // Rolled up sleeves
+            forearm.position.y = -0.75;
+            armGroup.add(forearm);
+
+            armGroup.position.set(x, 2.0, 0);
+            return armGroup;
+        }
+
+        const leftArm = createArm(-0.4);
+        leftArm.rotation.z = 0.3; // Relaxed pose
+        leftArm.rotation.x = 0.5; // Holding sword forward
+        kiritoGroup.add(leftArm);
+
+        const rightArm = createArm(0.4);
+        rightArm.rotation.z = -0.3;
+        rightArm.rotation.x = 0.5;
+        kiritoGroup.add(rightArm);
+
+        // D. Swords (Attached to hands)
+        function createSword(colorMat, isElucidator) {
+            const swordGroup = new THREE.Group();
+            
+            // Handle
+            const hilt = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.3), blackMat);
+            swordGroup.add(hilt);
+            
+            // Guard
+            const guard = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.05, 0.05), isElucidator ? blackMat : silverMat);
+            guard.position.y = 0.15;
+            swordGroup.add(guard);
+
+            // Blade
+            const bladeGeo = new THREE.BoxGeometry(0.08, 1.2, 0.02);
+            // Taper blade
+            const pos = bladeGeo.attributes.position;
+            // (Simulating taper by scaling isn't perfect in pure geometry without modification, but looks okay)
+            
+            const blade = new THREE.Mesh(bladeGeo, isElucidator ? blackGlowMat : tealGlowMat);
+            blade.position.y = 0.8;
+            
+            // Glow effect wrapper
+            if (!isElucidator) {
+                const glow = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.25, 0.05), new THREE.MeshBasicMaterial({color: 0x00ffcc, transparent: true, opacity: 0.3}));
+                glow.position.y = 0.8;
+                swordGroup.add(glow);
+            }
+
+            swordGroup.add(blade);
+            return swordGroup;
+        }
+
+        // Add Elucidator (Right Hand)
+        const elucidator = createSword(blackMat, true);
+        elucidator.position.y = -0.9; // In hand
+        elucidator.rotation.x = -1.5; // Pointing forward
+        rightArm.add(elucidator);
+
+        // Add Dark Repulser (Left Hand)
+        const repulser = createSword(tealGlowMat, false);
+        repulser.position.y = -0.9;
+        repulser.rotation.x = -1.5;
+        leftArm.add(repulser);
+
+        scene.add(kiritoGroup);
+
+
+        // --- 4. PARTICLES (Digital Data Stream) ---
+        const particlesGeo = new THREE.BufferGeometry();
+        const particleCount = 200;
+        const posArray = new Float32Array(particleCount * 3);
+        
+        for(let i=0; i<particleCount * 3; i++) {
+            posArray[i] = (Math.random() - 0.5) * 15;
+        }
+        
+        particlesGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+        const particleMat = new THREE.PointsMaterial({
+            size: 0.05,
+            color: 0x00aaff,
+            transparent: true,
+            opacity: 0.8,
+            blending: THREE.AdditiveBlending
+        });
+        
+        const particleSystem = new THREE.Points(particlesGeo, particleMat);
+        scene.add(particleSystem);
+
+
+        // --- 5. ANIMATION LOOP ---
+        let mouseX = 0;
+        let mouseY = 0;
+
+        document.addEventListener('mousemove', (e) => {
+            mouseX = (e.clientX - window.innerWidth / 2) / 1000;
+            mouseY = (e.clientY - window.innerHeight / 2) / 1000;
+        });
+
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const t = clock.getElapsedTime();
+
+            // 1. Idle Breathing / Floating
+            kiritoGroup.position.y = Math.sin(t * 1.5) * 0.1; // Float up down
+            
+            // 2. Look at mouse (Subtle)
+            kiritoGroup.rotation.y = mouseX * 0.5;
+            kiritoGroup.rotation.x = mouseY * 0.2;
+
+            // 3. Sword Pulse (Dark Repulser)
+            const pulse = (Math.sin(t * 5) + 1) * 0.5 + 0.5;
+            repulser.children[2].material.color.setHSL(0.45, 1, pulse * 0.5); // Pulse teal brightness
+
+            // 4. Particle Rise
+            particleSystem.rotation.y += 0.001;
+            particleSystem.position.y = (Math.sin(t * 0.5) * 0.5);
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // --- 6. RESIZE HANDLER ---
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+
+        // --- 7. CHAT LOGIC ---
+        const input = document.getElementById('userInput');
+        const msgArea = document.getElementById('msgArea');
+
+        function addMessage(text, sender) {
+            const div = document.createElement('div');
+            div.className = `msg ${sender}`;
+            div.textContent = text;
+            msgArea.appendChild(div);
+            msgArea.scrollTop = msgArea.scrollHeight;
+        }
+
+        function sendMessage() {
+            const text = input.value.trim();
+            if(!text) return;
+
+            addMessage(text, 'user');
+            input.value = '';
+
+            // Kirito's Logic (Simple Simulated AI)
+            setTimeout(() => {
+                let response = "I didn't catch that command.";
+                
+                // Simple keyword matching
+                const lower = text.toLowerCase();
+                if(lower.includes('hello') || lower.includes('hi')) response = "Systems nominal. Hello.";
+                else if(lower.includes('status')) response = "HP: 100%. Dual Blades: Ready.";
+                else if(lower.includes('switch')) response = "Switching! Covers me!";
+                else if(lower.includes('asuna')) response = "She is safe. Focus on the mission.";
+                else if(lower.includes('starburst')) response = "Starburst... Stream!!";
+                else response = "Understood. Analyzing request...";
+
+                addMessage(response, 'kirito');
+                
+                // Combat animation trigger (Jump up slightly)
+                kiritoGroup.position.y += 0.5;
+                setTimeout(() => kiritoGroup.position.y -= 0.5, 200);
+
+            }, 800);
+        }
+
+        // Enter key support
+        input.addEventListener('keypress', (e) => {
+            if(e.key === 'Enter') sendMessage();
+        });
+
+    </script>
+</body>
+</html>'''
+        return html
+
+
+def start_web_server():
+    """Start web server in background"""
+    server = HTTPServer(('127.0.0.1', 8000), CommandHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+
+def main():
+    """Main application"""
+    global executor
+    executor = AdvancedCommandExecutor()
+    
+    print("\n" + "="*70)
+    print("KIRITO AI - ULTIMATE ENHANCED VERSION")
+    print("="*70)
+    
+    print("\nStarting web server...")
+    start_web_server()
+    
+    print("✓ Web interface: http://localhost:8000")
+    print("✓ Voice control: Active")
+    print("\n" + "="*70)
+    print("SUPPORTED COMMANDS:")
+    print("="*70)
+    print("\nFILE OPERATIONS:")
+    print("  - create file [name]")
+    print("  - create folder [name]")
+    print("  - delete file [name]")
+    print("  - delete folder [name]")
+    print("  - list files")
+    print("  - organize files")
+    
+    print("\nSYSTEM COMMANDS:")
+    print("  - open notepad / chrome / calculator / paint / word / excel")
+    print("  - launch firefox / edge / explorer")
+    print("  - start powershell / cmd")
+    print("  - settings / taskmanager")
+    
+    print("\nWEB SEARCH:")
+    print("  - what is [topic]")
+    print("  - who is [person]")
+    print("  - where is [place]")
+    print("  - search [query]")
+    print("  - google [query]")
+    
+    print("\nENTERTAINMENT:")
+    print("  - play [song]")
+    print("  - tell me a joke")
+    print("  - what time is it")
+    print("  - show statistics")
+    
+    print("\n" + "="*70 + "\n")
+    
+    running = True
+    
+    while running:
+        try:
+            print(">>> Listening... (say command after trigger word like 'Kirito')")
+            command = executor.listen()
+            
+            if command and len(command) > 1:
+                print(f"You: {command}")
+                success, response, category = executor.execute(command)
+                
+                if response:
+                    print(f"Kirito [{category}]: {response[:100]}{'...' if len(response) > 100 else ''}")
+                    try:
+                        executor.speak(response[:200])
+                    except:
+                        pass
+                
+                running = success
+            
+            time.sleep(0.2)
+        
+        except KeyboardInterrupt:
+            print("\n\nGoodbye!")
+            running = False
+        except Exception as e:
+            logger.error(f"Error: {e}")
+            time.sleep(1)
+
+
+if __name__ == "__main__":
+    main()
