@@ -57,12 +57,9 @@ class AdvancedCommandExecutor:
     """Execute ANY Windows command with intelligent parsing"""
     
     def __init__(self):
-        # Create minimal recognizer state; instantiate new Recognizer in listen()
-        self.listener = None
+        self.listener = sr.Recognizer()
         self.engine = pyttsx3.init()
         self._setup_voice()
-        # Lock to serialize TTS calls and avoid blocking microphone
-        self._tts_lock = threading.Lock()
         self.base_path = Path.home() / "Kirito_Files"
         self.base_path.mkdir(exist_ok=True)
         self.learned = self._load_learned_commands()
@@ -133,13 +130,11 @@ class AdvancedCommandExecutor:
     def listen(self, timeout: int = 3) -> str:
         """Fast listening with flexible trigger detection"""
         try:
-            # Create a fresh recognizer for each listen to avoid state issues
-            recognizer = sr.Recognizer()
             with sr.Microphone() as source:
-                recognizer.adjust_for_ambient_noise(source, duration=0.2)
-                audio = recognizer.listen(source, timeout=timeout, phrase_time_limit=8)
-
-            command = recognizer.recognize_google(audio).lower().strip()
+                self.listener.adjust_for_ambient_noise(source, duration=0.2)
+                audio = self.listener.listen(source, timeout=timeout, phrase_time_limit=8)
+            
+            command = self.listener.recognize_google(audio).lower().strip()
             
             triggers = ['kirito', 'kiroto', 'kiro', 'teri to', 'cherry to', 'territo', 'teri', 'cherry', 'kidhar', 'ki ritu']
             for trigger in triggers:
@@ -157,19 +152,10 @@ class AdvancedCommandExecutor:
     
     def speak(self, text: str):
         """Fast text-to-speech"""
-        # Run TTS in a separate thread so it doesn't block the main listen loop
-        def _speak_async(txt):
-            try:
-                with self._tts_lock:
-                    self.engine.say(txt)
-                    self.engine.runAndWait()
-            except Exception:
-                pass
-
         try:
-            t = threading.Thread(target=_speak_async, args=(text,), daemon=True)
-            t.start()
-        except Exception:
+            self.engine.say(text)
+            self.engine.runAndWait()
+        except:
             pass
     
     def execute(self, command: str) -> Tuple[bool, str, str]:
@@ -1031,7 +1017,6 @@ class RealisticUI:
         // --- 7. CHAT LOGIC ---
         const input = document.getElementById('userInput');
         const msgArea = document.getElementById('msgArea');
-        let lastKnownResponse = '';
 
         function addMessage(text, sender) {
             const div = document.createElement('div');
@@ -1069,9 +1054,6 @@ class RealisticUI:
                     // subtle animation on response
                     kiritoGroup.position.y += 0.3;
                     setTimeout(() => kiritoGroup.position.y -= 0.3, 200);
-
-                    // update last-known response to avoid duplicate polling messages
-                    try { lastKnownResponse = data.response || ''; } catch(e) {}
                 })
                 .catch(err => {
                     // show fallback message
@@ -1084,26 +1066,6 @@ class RealisticUI:
         input.addEventListener('keypress', (e) => {
             if(e.key === 'Enter') sendMessage();
         });
-
-        // --- 8. VOICE UI POLLING ---
-        // Poll server for voice-triggered responses so typed and voice commands
-        // both appear in the chat simultaneously.
-        setInterval(() => {
-            fetch('/api/status')
-                .then(r => r.json())
-                .then(s => {
-                    const resp = s.last_response || '';
-                    if(!resp || resp === 'Ready') return;
-                    if(resp !== lastKnownResponse) {
-                        // avoid duplicate if last visible message matches
-                        const msgs = msgArea.getElementsByClassName('msg');
-                        const lastText = msgs.length ? msgs[msgs.length - 1].textContent : '';
-                        if(lastText !== resp) addMessage(resp, 'kirito');
-                        lastKnownResponse = resp;
-                    }
-                })
-                .catch(() => {});
-        }, 1200);
 
     </script>
 </body>
@@ -1142,53 +1104,34 @@ def add_to_startup(app_name: str = "KiritoAI", exe_path: str = None) -> bool:
 def run_voice_loop():
     """Run the existing voice/listen loop in a background thread so the GUI can be foreground."""
     global executor
-    # Always loop; only break on explicit control/exit commands.
-    loop_counter = 0
-    while True:
+    running = True
+
+    while running:
         try:
-            loop_counter += 1
             print(
-                ">>> Listening... (say command after trigger word like 'Kirito')", flush=True)
-
-            try:
-                command = executor.listen()
-            except Exception as e:
-                logger.error(f"listen() error: {e}")
-                command = ""
-
-            print(f"[debug] listen returned: '{command}'", flush=True)
+                ">>> Listening... (say command after trigger word like 'Kirito')")
+            command = executor.listen()
 
             if command and len(command) > 1:
-                print(f"You: {command}", flush=True)
-                try:
-                    success, response, category = executor.execute(command)
-                except Exception as e:
-                    logger.error(f"execute() raised: {e}")
-                    success, response, category = True, "Execution error", "error"
-
-                print(f"[debug] execute -> success={success}, category={category}", flush=True)
+                print(f"You: {command}")
+                success, response, category = executor.execute(command)
 
                 if response:
-                    print(f"Kirito [{category}]: {response[:100]}{'...' if len(response) > 100 else ''}", flush=True)
+                    print(f"Kirito [{category}]: {response[:100]}{'...' if len(response) > 100 else ''}")
                     try:
                         executor.speak(response[:200])
-                        print("[debug] TTS finished", flush=True)
-                    except Exception as e:
-                        logger.debug(f"TTS failed: {e}")
+                    except:
+                        pass
 
-                # Only exit if the command explicitly requests shutdown
-                if category == 'control' and not success:
-                    print("Shutdown command received — stopping voice loop.", flush=True)
-                    break
+                running = success
 
-            # tiny pause before next listen to avoid busy loop
             time.sleep(0.2)
 
         except KeyboardInterrupt:
-            print("\n\nGoodbye!", flush=True)
-            break
+            print("\n\nGoodbye!")
+            running = False
         except Exception as e:
-            logger.error(f"Voice loop unexpected error: {e}")
+            logger.error(f"Error: {e}")
             time.sleep(1)
 
 
@@ -1223,8 +1166,7 @@ def main():
     print("\nSupported commands: see console or UI")
 
     # Run voice loop in background so GUI window remains foreground
-    # Use a non-daemon thread so it continues running alongside the GUI
-    voice_thread = threading.Thread(target=run_voice_loop, daemon=False)
+    voice_thread = threading.Thread(target=run_voice_loop, daemon=True)
     voice_thread.start()
 
     # Try launching a native window using pywebview; fallback to default browser
