@@ -98,3 +98,17 @@ This project is distributed under the MIT License. See the LICENSE file for more
 Thank you for exploring KIRITO AI! We hope it becomes an indispensable part of your digital workflow.
 
 Let me know if you'd like any specific sections expanded or modified!
+
+---
+
+## Security
+
+Please refer to [SECURITY.md](SECURITY.md) for vulnerability reporting guidelines.
+
+## Contributing
+
+Contributions are welcome! Please review [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduct and development process.
+
+## Author
+
+Developed and maintained by **[Krishna Patil](https://github.com/kriss2012)**.
